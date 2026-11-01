@@ -1,0 +1,7 @@
+AEROMIRAGE_NOTES.md
+__pycache__/
+*.pyc
+outputs/
+main.pdf
+ARCHITECTURE.md
+checkpoints

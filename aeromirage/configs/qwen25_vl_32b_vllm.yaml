@@ -1,0 +1,61 @@
+# AeroMirage baseline: Qwen2.5-VL 32B (vLLM).
+# Any field can be overridden on the command line as key=value, e.g. runtime.limit=20.
+
+model:
+  family: qwen25_vl_vllm      # adapter in aeromirage/models/
+  path: /data01/public/Qwen/Qwen2.5-VL-32B-Instruct # checkpoint directory
+  trust_remote_code: false    # true: run the code shipped with the checkpoint
+  local_files_only: true      # true: read the checkpoint from model.path only, never download
+  options:
+    dtype: bfloat16           # weight precision
+    tensor_parallel_size: 2   # GPUs the model is split over
+    pipeline_parallel_size: 1 # pipeline-parallel stages
+    gpu_memory_utilization: 0.90 # share of each GPU's memory vLLM may use
+    # with the 32B weights on two 48 GB GPUs the KV cache holds about 18k tokens; a 32-frame input needs about 6k
+    max_model_len: 16384
+    max_num_seqs: 1           # one question at a time
+    enforce_eager: false      # false: CUDA graphs allowed
+    enable_prefix_caching: false # false: every question is computed from scratch
+    mm_encoder_tp_mode: data  # each GPU runs the whole vision encoder on its share of the frames
+    disable_log_stats: true   # true: no periodic vLLM throughput logs
+    # FlashInfer's sampling kernels need a JIT build with a recent CUDA toolkit; greedy decoding does not use them
+    use_flashinfer_sampler: false
+
+    engine_kwargs:
+      # Qwen2.5-VL's vision head dimension is 80. The FlashAttention build
+      # bundled with vLLM 0.11/Torch 2.8 on L20 requires a multiple of 32,
+      # so XFORMERS is the compatible accelerated backend here.
+      attention_backend: XFORMERS
+      # vLLM 0.11's XFormers paged-attention Triton kernel uses BLOCK_N=64.
+      block_size: 64
+
+dataset:
+  root: /data01/yeziheng/Dataset/DroneVidHalluBench # AeroMirage folder holding QA/ and the videos
+  video_dir: video_reencoded  # video folder inside dataset.root
+  task: all                   # all | objective | binary_verification | single_choice | multiple_choice | open_ended
+
+video:
+  # Video reading: the official qwen_vl_utils.process_vision_info (qwen-vl-utils 0.0.14)
+  num_frames: 32              # frames sampled uniformly per video, the same for every model (qwen-vl-utils nframes; must be even)
+  min_pixels: 100352          # min pixels per frame = 128 x 28 x 28 (official default)
+  max_pixels: 301056          # max pixels per frame = 384 x 28 x 28 (official default: 602112 = 768 x 28 x 28)
+  video_reader_backend: decord # video decoder used by qwen-vl-utils
+
+generation:
+  limits:
+    binary_verification: 64   # max new tokens per answer
+    single_choice: 64         # max new tokens per answer
+    multiple_choice: 64       # max new tokens per answer
+    open_ended: 256           # max new tokens per answer
+
+output:
+  predictions: outputs/predictions/qwen25_vl_32b_vllm.jsonl # one line per question: its raw answer
+  resume: true                # true: continue an existing file, skipping answered questions
+  retry_errors: true          # true: when resuming, answer the failed questions again
+  overwrite: false            # true: start the file over
+
+runtime:
+  limit: 0                    # only the first N questions (0: all)
+  limit_per_task: 0           # only the first N questions of each format (0: all)
+  seed: 42                    # random seed (decoding is greedy)
+  fail_fast: false            # true: stop at the first failed question

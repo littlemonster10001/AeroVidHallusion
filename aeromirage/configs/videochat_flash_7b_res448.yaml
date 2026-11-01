@@ -1,0 +1,40 @@
+# AeroMirage baseline: VideoChat-Flash-Qwen2-7B (res448) (Transformers).
+# Any field can be overridden on the command line as key=value, e.g. runtime.limit=20.
+
+model:
+  family: videochat_flash_transformers # adapter in aeromirage/models/
+  path: /data01/public/VideoChat-Flash-Qwen2-7B_res448 # checkpoint directory
+  trust_remote_code: true     # true: run the code shipped with the checkpoint
+  local_files_only: true      # true: read the checkpoint from model.path only, never download
+  options:
+    dtype: bfloat16           # weight precision
+    device: cuda:0            # GPU the model runs on
+    mm_llm_compress: false    # false: no extra visual-token compression inside the LLM
+
+dataset:
+  root: /data01/yeziheng/Dataset/DroneVidHalluBench # AeroMirage folder holding QA/ and the videos
+  video_dir: video_reencoded  # video folder inside dataset.root
+  task: all                   # all | objective | binary_verification | single_choice | multiple_choice | open_ended
+
+video:
+  # Video reading: the official mm_utils.read_frames_decord (shipped with the checkpoint)
+  num_frames: 32              # frames sampled uniformly per video, the same for every model; a multiple of 4 (frames are encoded in groups of mm_local_num_frames = 4; the official load_video forces at least 64 frames)
+
+generation:
+  limits:
+    binary_verification: 64   # max new tokens per answer
+    single_choice: 64         # max new tokens per answer
+    multiple_choice: 64       # max new tokens per answer
+    open_ended: 256           # max new tokens per answer
+
+output:
+  predictions: outputs/predictions/videochat_flash_7b_res448.jsonl # one line per question: its raw answer
+  resume: true                # true: continue an existing file, skipping answered questions
+  retry_errors: true          # true: when resuming, answer the failed questions again
+  overwrite: false            # true: start the file over
+
+runtime:
+  limit: 0                    # only the first N questions (0: all)
+  limit_per_task: 0           # only the first N questions of each format (0: all)
+  seed: 42                    # random seed (decoding is greedy)
+  fail_fast: false            # true: stop at the first failed question

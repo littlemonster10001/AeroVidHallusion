@@ -1,0 +1,103 @@
+# AeroVera + VideoLLaMA3-7B：表 3 主结果（在 videollama3 环境运行，transformers 4.46.3）
+# 除 model / probing / resolution 的 HR 规则 / output 外，其余与 Qwen2.5-VL 版完全相同
+
+model:
+  family: videollama3
+  path: /data01/public/VideoLLaMA/VideoLLaMA3-7B
+  device: cuda:0
+  dtype: bfloat16
+
+probing:
+  # 读视频：官方 processor.load_video（checkpoint 自带 processing_videollama3.py，ffmpeg），参数与基线
+  # aeromirage/configs/videollama3_7b_transformers.yaml 的 video 段完全相同
+  num_frames: 32              # 均匀抽取的帧数 N
+  fps: 1                      # 官方默认；不足 num_frames 帧的短视频自动提高 fps（同基线）
+  max_visual_tokens: 16384    # 官方默认的视觉 token 上限（32 帧 4K 视频时每帧 448×840、480 token）
+
+targets:
+  # 目标提取（P4）：只看题目文字，抽取题目提到的英文物体名词；贪心，不合格重试一次
+  max_new_tokens: 256
+
+dino:
+  # 目标相关性 Q_t（附录 C.1）：DINOv3 ViT-L/16 + dino.txt 文本头；权重在软链接 checkpoints/ 下
+  # 目标嵌入减去 29 个通用航拍类别的平均嵌入（代码 VOCABULARY），Q_t 在扫描帧上 min-max（A14）
+  repo_dir: checkpoints/DINOv3/dinov3
+  weights: checkpoints/DINOv3/dinov3_vitl16_dinotxt_vision_head_and_text_encoder-a442d8f5.pth
+  backbone_weights: checkpoints/DINOv3/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth
+  bpe_path: checkpoints/DINOv3/bpe_simple_vocab_16e6.txt.gz
+  device: cuda:1              # 与 Qwen 分开放（32 帧 Probing + 归因已占 41 GiB）
+  short_side: 1088            # 帧缩放到短边 1088（附录 C.1）
+  window: 384                 # 滑窗边长（像素），须为 patch 大小 16 的倍数
+  stride: 192                 # 滑窗步长
+  batch_size: 16              # 每次前向的窗口数，只影响速度（旧代码为 4）
+  topk: 4                     # P：每帧每目标取相似度最高的 4 个 patch 求平均（式 9）
+  feature_topk: 16            # 唯一性用的目标特征 h 取最高的 16 个 patch 的特征平均（取 4 个时相邻帧不稳定，A17）
+
+motion:
+  # 运动变化 M_t（附录 C.1，式 10-11）：RAFT-Small 光流（从中间帧到前后两帧），RANSAC 部分仿射扣除相机运动
+  weights: checkpoints/optical_flow/raft_small_C_T_V2-01064c6d.pth
+  device: cuda:1              # 与 DINOv3 同卡
+  interval: 0.3               # Δ：三帧之间相隔的秒数；视频首尾帧改为单侧取两帧
+  max_side: 640               # 光流输入的最长边（解码时直接缩小，不放大；边长取 8 的倍数）
+  num_flow_updates: 12        # RAFT 迭代次数
+  grid_step: 16               # 拟合相机运动的网格对应点间距（光流图像像素）
+  ransac_threshold: 2.0       # RANSAC 重投影阈值（像素）
+  min_inlier_ratio: 0.5       # 内点比例低于此值则该帧无效，M_t = 0
+  percentile: 99              # V_t、A_t 取逐像素残余速度 / 速度变化的第 99 百分位（不用整帧平均向量，A16）
+  gamma: 0.3                  # γ：运动强度 V_t 的权重，运动变化 A_t 的权重为 1 - γ
+  speed_scale: 0.03           # κV
+  change_scale: 0.1           # κA
+  batch_size: 16              # 每次 RAFT 前向的光流数（每帧两段），只影响速度
+
+selection:
+  # 选帧（4.2 节、附录 C.1）：在 Probing 帧的时间空隙中取候选帧，再按 λq·Q + λm·M + λu·U 贪心补入 B 帧
+  # （分数并列时取 Q_t 高的，再取早的）
+  num_candidates: 32          # |C|；视频剩余帧不够时取到剩余帧数为止（只有 0195 会这样）
+  num_added: 16               # B；正分支共 N + B = 48 帧
+  relevance_weight: 0.6       # λq：目标相关性 Q_t 的权重（式 3）
+  motion_weight: 0.2          # λm：运动变化 M_t
+  uniqueness_weight: 0.2      # λu：唯一性 U_t（每补一帧后对剩余候选重算）
+
+resolution:
+  # 分辨率增益 R_t（附录 C.2）：同一源帧缩放成 LR（Probing 尺寸）与 HR，按目标图加权估计 HR 多带来的细节（bits）
+  num_hr: 16                  # B_hr：正分支 48 帧中 R_t 最高的 16 帧用 HR，其余用 LR
+  hr_short_side: 1024         # 不用（hr_scale > 0 时按比例取 HR）
+  hr_scale: 1.4               # HR = LR 长宽各 ×1.4，取 28 的倍数、不超过源帧（D1 方案 A：上下文 32768，
+                              # 4K 时 32×480 + 16×924 ≈ 3.0 万 token）；不比 LR 大时不用 HR
+  lower_quantile: 0.5         # 目标图：每个目标的相似度按全视频的 50% / 95% 分位数缩放到 [0, 1]
+  upper_quantile: 0.95
+  floor: 0.1                  # μ：目标图低于它的像素算背景（估计噪声），高于它的按 (m - μ) / (1 - μ) 加权
+  noise_floor: 0.00784313725  # ε_n = 2/255：背景噪声能量的下限为 ε_n²
+  device: cuda:1              # 与 DINOv3、RAFT 同卡
+
+negative:
+  # 负分支：对 Probing 答案做门控归因，按带符号的 A_i 屏蔽前 rho% 的视觉 token（附录 C.3）
+  mask_percent: 20            # rho；屏蔽个数 = ceil(视觉 token 数 x rho / 100)
+
+contrastive:
+  # 对比决策（式 2）：q = q+ + alpha (q+ - q-)，在原始 logits 上；选择题只比较选项字母，开放题只对比第一个 token
+  alpha: 0.5
+
+dataset:
+  root: /data01/yeziheng/Dataset/DroneVidHalluBench
+  video_dir: video_reencoded
+  task: all
+
+generation:
+  limits:                     # 每种题型的 max_new_tokens，同基线
+    binary_verification: 64
+    single_choice: 64
+    multiple_choice: 64
+    open_ended: 256
+
+output:
+  predictions: outputs/predictions/aerovera_videollama3_7b.jsonl   # 每题一行：最终答案 + 全部中间结果（§4）
+  resume: true                # 已有文件时跳过已完成的题
+  retry_errors: true          # 出错的题重跑
+  overwrite: false
+
+runtime:
+  limit: 0                    # 只跑前 N 题（0 = 全部）
+  limit_per_task: 0
+  question_ids: []            # 只跑这些题（检查用）
+  fail_fast: false

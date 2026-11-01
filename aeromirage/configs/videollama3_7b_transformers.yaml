@@ -1,0 +1,42 @@
+# AeroMirage baseline: VideoLLaMA3 7B (Transformers).
+# Any field can be overridden on the command line as key=value, e.g. runtime.limit=20.
+
+model:
+  family: videollama3_transformers # adapter in aeromirage/models/
+  path: /data01/public/VideoLLaMA/VideoLLaMA3-7B # checkpoint directory
+  trust_remote_code: true     # true: run the code shipped with the checkpoint
+  local_files_only: true      # true: read the checkpoint from model.path only, never download
+  options:
+    dtype: bfloat16           # weight precision
+    device: cuda:0            # GPU the model runs on
+    attention_implementation: flash_attention_2 # attention kernel
+
+dataset:
+  root: /data01/yeziheng/Dataset/DroneVidHalluBench # AeroMirage folder holding QA/ and the videos
+  video_dir: video_reencoded  # video folder inside dataset.root
+  task: all                   # all | objective | binary_verification | single_choice | multiple_choice | open_ended
+
+video:
+  # Video reading: the official processor.load_video (processing_videollama3.py in the checkpoint)
+  num_frames: 32              # frames sampled uniformly per video, the same for every model (load_video's max_frames)
+  fps: 1                      # official default; raised for short videos so that num_frames frames exist
+  max_visual_tokens: 16384    # official default (max_tokens in preprocessor_config.json)
+
+generation:
+  limits:
+    binary_verification: 64   # max new tokens per answer
+    single_choice: 64         # max new tokens per answer
+    multiple_choice: 64       # max new tokens per answer
+    open_ended: 256           # max new tokens per answer
+
+output:
+  predictions: outputs/predictions/videollama3_7b_transformers.jsonl # one line per question: its raw answer
+  resume: true                # true: continue an existing file, skipping answered questions
+  retry_errors: true          # true: when resuming, answer the failed questions again
+  overwrite: false            # true: start the file over
+
+runtime:
+  limit: 0                    # only the first N questions (0: all)
+  limit_per_task: 0           # only the first N questions of each format (0: all)
+  seed: 42                    # random seed (decoding is greedy)
+  fail_fast: false            # true: stop at the first failed question

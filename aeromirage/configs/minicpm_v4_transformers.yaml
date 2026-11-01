@@ -1,0 +1,47 @@
+# AeroMirage baseline: MiniCPM-V 4 (Transformers).
+# Any field can be overridden on the command line as key=value, e.g. runtime.limit=20.
+
+model:
+  family: minicpm_v4_transformers # adapter in aeromirage/models/
+  path: /data01/public/MiniCPM/MiniCPM-V-4 # checkpoint directory
+  trust_remote_code: true     # true: run the code shipped with the checkpoint
+  local_files_only: true      # true: read the checkpoint from model.path only, never download
+  options:
+    dtype: bfloat16           # weight precision
+    device: cuda:0            # GPU the model runs on
+    attn_implementation: sdpa # attention kernel
+    max_inp_length: 32768     # max input tokens of chat()
+    # greedy decoding, as for every model; the official chat(sampling=False) defaults to beam search (num_beams=3, repetition_penalty=1.2)
+    num_beams: 1
+    repetition_penalty: 1.0   # no repetition penalty
+
+dataset:
+  root: /data01/yeziheng/Dataset/DroneVidHalluBench # AeroMirage folder holding QA/ and the videos
+  video_dir: video_reencoded  # video folder inside dataset.root
+  task: all                   # all | objective | binary_verification | single_choice | multiple_choice | open_ended
+
+video:
+  # Video reading: encode_video from the official "Chat with video" example (copied into minicpm_v4_transformers.py)
+  num_frames: 32              # frames sampled uniformly per video, the same for every model (MAX_NUM_FRAMES; short videos sample from all frames)
+  fps: 1                      # candidate frames per second (official example)
+  max_slice_nums: 2           # slices per frame (official video example)
+  use_image_id: false         # official video example
+
+generation:
+  limits:
+    binary_verification: 32   # max new tokens per answer
+    single_choice: 32         # max new tokens per answer
+    multiple_choice: 64       # max new tokens per answer
+    open_ended: 256           # max new tokens per answer
+
+output:
+  predictions: outputs/predictions/minicpm_v4_transformers.jsonl # one line per question: its raw answer
+  resume: true                # true: continue an existing file, skipping answered questions
+  retry_errors: true          # true: when resuming, answer the failed questions again
+  overwrite: false            # true: start the file over
+
+runtime:
+  limit: 0                    # only the first N questions (0: all)
+  limit_per_task: 0           # only the first N questions of each format (0: all)
+  seed: 42                    # random seed (decoding is greedy)
+  fail_fast: false            # true: stop at the first failed question

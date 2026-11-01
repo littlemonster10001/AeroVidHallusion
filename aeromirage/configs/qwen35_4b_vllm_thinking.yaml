@@ -1,0 +1,53 @@
+# AeroMirage baseline: Qwen3.5 4B, thinking mode (vLLM).
+# Any field can be overridden on the command line as key=value, e.g. runtime.limit=20.
+
+model:
+  family: qwen35_vllm         # adapter in aeromirage/models/
+  path: /data01/public/Qwen/Qwen3.5-4B # checkpoint directory
+  trust_remote_code: false    # true: run the code shipped with the checkpoint
+  local_files_only: true      # true: read the checkpoint from model.path only, never download
+  options:
+    dtype: bfloat16           # weight precision
+    tensor_parallel_size: 1   # GPUs the model is split over
+    pipeline_parallel_size: 1 # pipeline-parallel stages
+    gpu_memory_utilization: 0.85 # share of each GPU's memory vLLM may use
+    max_model_len: 32768      # max tokens per request (prompt + answer)
+    max_num_seqs: 1           # one question at a time
+    enforce_eager: false      # false: CUDA graphs allowed
+    enable_prefix_caching: false # false: every question is computed from scratch
+    disable_log_stats: true   # true: no periodic vLLM throughput logs
+    use_flashinfer_sampler: false # false: greedy decoding does not need FlashInfer's sampling kernels
+    enable_thinking: true     # thinking mode of the chat template on / off
+    thinking_token_budget: 1536 # max tokens of the thinking section
+
+dataset:
+  root: /data01/yeziheng/Dataset/DroneVidHalluBench # AeroMirage folder holding QA/ and the videos
+  video_dir: video_reencoded  # video folder inside dataset.root
+  task: all                   # all | objective | binary_verification | single_choice | multiple_choice | open_ended
+
+video:
+  # Video reading: the official qwen_vl_utils.process_vision_info (qwen-vl-utils 0.0.14, patch size 16)
+  num_frames: 32              # frames sampled uniformly per video, the same for every model (qwen-vl-utils nframes; must be even)
+  min_pixels: 131072          # min pixels per frame = 128 x 32 x 32 (official default)
+  max_pixels: 301056          # max pixels per frame (official default: 786432 = 768 x 32 x 32)
+  video_reader_backend: decord # video decoder used by qwen-vl-utils
+
+generation:
+  # The adapter caps thinking at 1536 tokens and reserves 512 for the answer.
+  limits:
+    binary_verification: 2048 # max new tokens per answer
+    single_choice: 2048       # max new tokens per answer
+    multiple_choice: 2048     # max new tokens per answer
+    open_ended: 2048          # max new tokens per answer
+
+output:
+  predictions: outputs/predictions/qwen35_4b_vllm_thinking.jsonl # one line per question: its raw answer
+  resume: true                # true: continue an existing file, skipping answered questions
+  retry_errors: true          # true: when resuming, answer the failed questions again
+  overwrite: false            # true: start the file over
+
+runtime:
+  limit: 0                    # only the first N questions (0: all)
+  limit_per_task: 0           # only the first N questions of each format (0: all)
+  seed: 42                    # random seed (decoding is greedy)
+  fail_fast: false            # true: stop at the first failed question

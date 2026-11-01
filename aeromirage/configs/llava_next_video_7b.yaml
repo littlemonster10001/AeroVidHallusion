@@ -1,0 +1,45 @@
+# AeroMirage baseline: LLaVA-NeXT-Video-7B (the official LLaVA-NeXT code).
+# Any field can be overridden on the command line as key=value, e.g. runtime.limit=20.
+
+model:
+  family: llava_next_video    # adapter in aeromirage/models/
+  path: /data01/public/LLaVA-NeXT-Video-7B # checkpoint directory
+  trust_remote_code: false    # true: run the code shipped with the checkpoint
+  local_files_only: true      # true: read the checkpoint from model.path only, never download
+  options:
+    dtype: float16            # weight precision
+    device: cuda:0            # GPU the model runs on
+    attention_implementation: flash_attention_2 # attention kernel
+    conv_mode: vicuna_v1      # LLaVA-NeXT conversation template
+    mm_spatial_pool_stride: 2 # spatial pooling stride of frame features (official video setting)
+    mm_spatial_pool_mode: average # spatial pooling: average, max or bilinear
+    mm_newline_position: no_token # no newline token between frames (official video setting)
+    vision_tower_path: /data01/public/AI-ModelScope/clip-vit-large-patch14-336 # local CLIP ViT-L/14-336 vision tower (needed with local_files_only)
+
+dataset:
+  root: /data01/yeziheng/Dataset/DroneVidHalluBench # AeroMirage folder holding QA/ and the videos
+  video_dir: video_reencoded  # video folder inside dataset.root
+  task: all                   # all | objective | binary_verification | single_choice | multiple_choice | open_ended
+
+video:
+  # Video reading: the official llava.utils.process_video_with_decord (force_sample=True: uniform sampling)
+  num_frames: 32              # frames sampled uniformly per video, the same for every model (frames_upbound; also sets the RoPE scaling)
+
+generation:
+  limits:
+    binary_verification: 8    # max new tokens per answer
+    single_choice: 8          # max new tokens per answer
+    multiple_choice: 16       # max new tokens per answer
+    open_ended: 64            # max new tokens per answer
+
+output:
+  predictions: outputs/predictions/llava_next_video_7b.jsonl # one line per question: its raw answer
+  resume: true                # true: continue an existing file, skipping answered questions
+  retry_errors: true          # true: when resuming, answer the failed questions again
+  overwrite: false            # true: start the file over
+
+runtime:
+  limit: 0                    # only the first N questions (0: all)
+  limit_per_task: 0           # only the first N questions of each format (0: all)
+  seed: 42                    # random seed (decoding is greedy)
+  fail_fast: false            # true: stop at the first failed question

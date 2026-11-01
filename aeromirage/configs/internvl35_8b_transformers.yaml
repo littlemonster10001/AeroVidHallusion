@@ -1,0 +1,43 @@
+# AeroMirage baseline: InternVL3.5 8B (Transformers).
+# Any field can be overridden on the command line as key=value, e.g. runtime.limit=20.
+
+model:
+  family: internvl35_transformers # adapter in aeromirage/models/
+  path: /data01/public/InternVL/InternVL3_5-8B # checkpoint directory
+  trust_remote_code: true     # true: run the code shipped with the checkpoint
+  local_files_only: true      # true: read the checkpoint from model.path only, never download
+  options:
+    dtype: bfloat16           # weight precision
+    # one GPU only: split over several GPUs, the model generates only "!"; 14B in bf16 (about 28 GB) fits on one 48 GB GPU
+    device_map: cuda:0
+    use_flash_attn: true      # true: FlashAttention, as in the official example
+
+dataset:
+  root: /data01/yeziheng/Dataset/DroneVidHalluBench # AeroMirage folder holding QA/ and the videos
+  video_dir: video_reencoded  # video folder inside dataset.root
+  task: all                   # all | objective | binary_verification | single_choice | multiple_choice | open_ended
+
+video:
+  # Video reading: load_video from the official model card (copied into internvl35_transformers.py)
+  num_frames: 32              # frames sampled uniformly per video, the same for every model (num_segments)
+  input_size: 448             # each frame resized to 448 x 448 (official video example)
+  max_num: 1                  # tiles per frame (official video example)
+
+generation:
+  limits:
+    binary_verification: 64   # max new tokens per answer
+    single_choice: 64         # max new tokens per answer
+    multiple_choice: 64       # max new tokens per answer
+    open_ended: 256           # max new tokens per answer
+
+output:
+  predictions: outputs/predictions/internvl35_8b_transformers.jsonl # one line per question: its raw answer
+  resume: true                # true: continue an existing file, skipping answered questions
+  retry_errors: true          # true: when resuming, answer the failed questions again
+  overwrite: false            # true: start the file over
+
+runtime:
+  limit: 0                    # only the first N questions (0: all)
+  limit_per_task: 0           # only the first N questions of each format (0: all)
+  seed: 42                    # random seed (decoding is greedy)
+  fail_fast: false            # true: stop at the first failed question
