@@ -13,11 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from aeromirage.benchmark import SYSTEM_PROMPT, build_task_prompt, option_letters
+from aeromirage.benchmark.parser import verified_options
 from aeromirage.types import BenchmarkSample
 from aerovera.backbones import create_backbone
 from aerovera.backbones.base import Attribution, Backbone, Video
 from aerovera.config import AeroVeraConfig
-from aerovera.contrastive import best_label, contrast, top_candidates, top_percent
+from aerovera.contrastive import best_label, chosen_options, confident, contrast, top_candidates, top_percent
 from aerovera.evidence.candidates import candidate_frame_ids, read_frames
 from aerovera.evidence.motion import FrameMotion, MotionChange
 from aerovera.evidence.resolution import band_energy, resolution_gains, scaled_size, top_frames
@@ -46,6 +47,7 @@ class Probing:
     video: Video
     attribution: Attribution | None  # A_i of every visual token to the answer
     task_prompt: str  # the question as asked (P2), reused by the positive branch
+    option_responses: dict[str, str] | None = None  # per-option multiple choice: each option's raw yes/no answer
 
 
 @dataclass
@@ -178,15 +180,26 @@ def prepare_video(models: Models, config: AeroVeraConfig, path: str | Path) -> V
     )
 
 
-def probing(backbone: Backbone, sample: BenchmarkSample, video: Video, max_new_tokens: int) -> Probing:
+def probing(
+    backbone: Backbone, sample: BenchmarkSample, video: Video, max_new_tokens: int, multiple_choice: str = "whole",
+) -> Probing:
     """Answer ``sample`` on the uniform frames exactly as the benchmark baseline asks it.
 
-    The only change to the baseline prompt is that multiple-choice questions
-    lose their meta options (P2). The attribution comes from the same pass;
+    Multiple choice follows the benchmark's ``generation.multiple_choice``:
+    per_option asks each ordinary option's yes/no question on the same video
+    and keeps the options answered 是 (A22); whole asks the question without
+    its meta options (P2). The attribution comes from the same pass;
     multiple-choice questions skip it, because their negative branch is built
     for each option instead.
     """
     task_prompt = build_task_prompt(without_meta_options(sample))
+    if sample.question_type == "multiple_choice" and multiple_choice == "per_option":
+        responses = {
+            label: backbone.generate(backbone.video_inputs(video, SYSTEM_PROMPT, verification_prompt(sample, text)),
+                                     max_new_tokens).text
+            for label, text in ordinary_options(sample)
+        }
+        return Probing(",".join(verified_options(responses)), [], None, video, None, task_prompt, responses)
     inputs = backbone.video_inputs(video, SYSTEM_PROMPT, task_prompt)
     if sample.question_type == "multiple_choice":
         answer, attribution = backbone.generate(inputs, max_new_tokens), None
@@ -249,13 +262,18 @@ def answer(models: Models, config: AeroVeraConfig, context: VideoContext, sample
     """One question end to end; the fields of its result line, ``raw_response`` (the final answer) included."""
     backbone, clock = models.backbone, Stopwatch()
     limit = config.generation.limit_for(sample.question_type)
-    probe = probing(backbone, sample, context.video, limit)
+    protocol = config.generation.multiple_choice
+    per_option = sample.question_type == "multiple_choice" and protocol == "per_option"
+    # Per option each question asked is a yes/no question, with that length limit (as in the benchmark).
+    probe = probing(backbone, sample, context.video,
+                    config.generation.limit_for("binary_verification") if per_option else limit, protocol)
     clock.lap("probing")
     extracted = targets(backbone, sample, config.targets.max_new_tokens)
     clock.lap("targets")
     record: dict[str, Any] = {
         "prompt": probe.task_prompt,
         "probing_response": probe.response,
+        **({"probing_option_responses": probe.option_responses} if probe.option_responses is not None else {}),
         "targets": extracted.targets,
         "target_outputs": extracted.outputs,
         "target_fallback": extracted.fallback,
@@ -297,7 +315,9 @@ def _single_choice(
     frames: list[Any], seconds: list[float], clock: Stopwatch,
 ) -> dict[str, Any]:
     """Single choice and yes/no (asked as A = 是 / B = 否): the option letters'
-    logits at the first answer position, contrasted."""
+    logits at the first answer position, contrasted. When the contrasted
+    answer is not confident enough (``contrastive.min_confidence``, A21) the
+    Probing answer stands."""
     labels = ["A", "B"] if sample.question_type == "binary_verification" else option_letters(sample.options)
     ids = backbone.label_ids(labels)
     inputs = backbone.image_inputs(frames, seconds, SYSTEM_PROMPT, probe.task_prompt)
@@ -307,8 +327,10 @@ def _single_choice(
     negative_logits = backbone.first_logits(probe.inputs, mask=_mask(probe, config))[ids].cpu()
     clock.lap("negative")
     combined = contrast(positive, negative_logits, config.contrastive.alpha)
+    kept_probing = not confident(combined, config.contrastive.min_confidence)
     return {
-        "raw_response": best_label(labels, combined),
+        "raw_response": probe.response if kept_probing else best_label(labels, combined),
+        "kept_probing": kept_probing,
         "positive_response": best_label(labels, positive),
         "negative_response": best_label(labels, negative_logits),
         "label_scores": {"labels": labels, "positive": [round(float(v), 4) for v in positive],
@@ -323,14 +345,15 @@ def _multiple_choice(
     """Each ordinary option as a yes/no question (P5). The positive branch
     judges every option on the shared images; the judgment is attributed on
     the Probing video with that option's question, and the top tokens masked
-    give the option's own negative branch. An option is chosen when A (是)
-    wins; the meta options are never answered."""
+    give the option's own negative branch. The options are chosen from their
+    yes-minus-no margins by ``contrastive.option_rule`` (A20), each branch's
+    answer by the same rule; the meta options are never answered."""
     options = ordinary_options(sample)
     prompts = [verification_prompt(sample, text) for _, text in options]
     yes_no = backbone.label_ids(["A", "B"])
     positive = [logits[yes_no].cpu() for logits in backbone.first_logits_many(frames, seconds, SYSTEM_PROMPT, prompts)]
     clock.lap("positive")
-    chosen: dict[str, list[str]] = {"raw_response": [], "positive_response": [], "negative_response": []}
+    margins: dict[str, dict[str, float]] = {"raw_response": {}, "positive_response": {}, "negative_response": {}}
     scores = {}
     for (label, _), prompt, judged in zip(options, prompts, positive):
         inputs = backbone.video_inputs(context.video, SYSTEM_PROMPT, prompt)
@@ -341,12 +364,12 @@ def _multiple_choice(
         combined = contrast(judged, negative_logits, config.contrastive.alpha)
         for field, values in (("raw_response", combined), ("positive_response", judged),
                               ("negative_response", negative_logits)):
-            if best_label(["A", "B"], values) == "A":
-                chosen[field].append(label)
+            margins[field][label] = float(values[0]) - float(values[1])
         scores[label] = {"positive": [round(float(v), 4) for v in judged],
                          "negative": [round(float(v), 4) for v in negative_logits]}
     clock.lap("negative")
-    return {**{field: ",".join(labels) for field, labels in chosen.items()}, "label_scores": scores}
+    rule = config.contrastive.option_rule
+    return {**{field: ",".join(chosen_options(m, rule)) for field, m in margins.items()}, "label_scores": scores}
 
 
 def _open_ended(

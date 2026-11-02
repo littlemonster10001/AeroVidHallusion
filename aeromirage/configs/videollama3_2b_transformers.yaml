@@ -23,6 +23,8 @@ video:
   max_visual_tokens: 16384    # official default (max_tokens in preprocessor_config.json)
 
 generation:
+  multiple_choice: per_option # per_option: each ordinary option asked as a yes/no question, the options answered
+                              # yes form the answer (meta options not asked); whole: one answer listing the options
   limits:
     binary_verification: 64   # max new tokens per answer
     single_choice: 64         # max new tokens per answer

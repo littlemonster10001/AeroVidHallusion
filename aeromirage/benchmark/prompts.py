@@ -9,6 +9,7 @@ role or follow it loosely.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 from aeromirage.types import BenchmarkSample
@@ -56,11 +57,39 @@ def option_letters(options: list[str]) -> list[str]:
     return letters
 
 
-def _option_text(label: str, text: str) -> str:
+def option_text(label: str, text: str) -> str:
     """Drop the dataset's ``A.`` prefix; the prompt writes ``A: text``."""
     return re.sub(
         rf"^\s*{re.escape(label)}\s*[.):：、]\s*", "", text, flags=re.IGNORECASE
     ).strip()
+
+
+# Multiple-choice options implied by the others rather than seen in the video.
+# The data has exactly these two texts, always last, and never in a reference
+# answer; an ordinary option such as "全部三个汽车停止在交叉处。" must stay, so
+# the whole text is compared.
+META_OPTIONS = ("以上都不是", "以上全部")
+
+# Per-option protocol of multiple choice (generation.multiple_choice):
+# every ordinary option is asked as a yes/no question (A = 是, B = 否) about
+# this statement, and the options answered 是 form the answer.
+VERIFICATION_STATEMENT = "针对问题“{question}”，“{option}”是正确答案之一。"
+
+
+def ordinary_options(sample: BenchmarkSample) -> list[tuple[str, str]]:
+    """(letter, text) of the options of a multiple-choice question other than the meta options."""
+    return [
+        (label, option_text(label, option))
+        for label, option in zip(option_letters(sample.options), sample.options)
+        if option_text(label, option) not in META_OPTIONS
+    ]
+
+
+def verification_prompt(sample: BenchmarkSample, option: str) -> str:
+    """Task prompt asking whether ``option`` (text without its letter) is one of the answers."""
+    statement = VERIFICATION_STATEMENT.format(question=sample.question.strip(), option=option)
+    return build_task_prompt(dataclasses.replace(
+        sample, question_type="binary_verification", question=statement, options=[]))
 
 
 def build_task_prompt(sample: BenchmarkSample) -> str:
@@ -77,7 +106,7 @@ def _choice_prompt(sample: BenchmarkSample) -> str:
         options = [("A", "是"), ("B", "否")]
     else:
         options = [
-            (label, _option_text(label, text))
+            (label, option_text(label, text))
             for label, text in zip(option_letters(sample.options), sample.options)
         ]
     multiple = sample.question_type == "multiple_choice"

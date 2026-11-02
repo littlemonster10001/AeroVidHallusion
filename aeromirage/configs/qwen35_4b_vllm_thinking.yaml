@@ -33,6 +33,8 @@ video:
   video_reader_backend: decord # video decoder used by qwen-vl-utils
 
 generation:
+  multiple_choice: per_option # per_option: each ordinary option asked as a yes/no question, the options answered
+                              # yes form the answer (meta options not asked); whole: one answer listing the options
   # The adapter caps thinking at 1536 tokens and reserves 512 for the answer.
   limits:
     binary_verification: 2048 # max new tokens per answer

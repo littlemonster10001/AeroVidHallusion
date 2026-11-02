@@ -22,9 +22,10 @@ from aerovera.prompts import TARGET_SYSTEM_PROMPT, VERIFICATION_STATEMENT
 # Config sections that change the answers; devices do not.
 ANSWER_SECTIONS = ("model", "probing", "targets", "dino", "motion", "selection", "resolution", "negative",
                    "contrastive", "generation")
-# Fields added with VideoLLaMA3. At these values they are left out, so that a
-# Qwen2.5-VL result file written before them still resumes.
-NEUTRAL = {"model": {"family": "qwen25_vl"}, "resolution": {"hr_scale": 0.0}}
+# Fields added after the first result files. At these values (the behaviour
+# before them) they are left out, so that those files still resume.
+NEUTRAL = {"model": {"family": "qwen25_vl"}, "resolution": {"hr_scale": 0.0},
+           "contrastive": {"option_rule": "sign", "min_confidence": 0.0}, "generation": {"multiple_choice": "whole"}}
 
 
 def fingerprint(config: AeroVeraConfig) -> dict[str, str]:

@@ -38,6 +38,8 @@ video:
   max_pixels: 301056          # max pixels per frame = 384 x 28 x 28 (official default VIDEO_MAX_PIXELS = 602112)
 
 generation:
+  multiple_choice: per_option # per_option: each ordinary option asked as a yes/no question, the options answered
+                              # yes form the answer (meta options not asked); whole: one answer listing the options
   limits:
     binary_verification: 64   # max new tokens per answer
     single_choice: 64         # max new tokens per answer

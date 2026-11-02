@@ -1,4 +1,4 @@
-"""Model-independent parts of the contrastive decision (Eq. 2): masking, q = q+ + alpha (q+ - q-), label choice."""
+"""Model-independent parts of the contrastive decision (Eq. 2): masking, q = q+ + alpha (q+ - q-), label and option choice."""
 
 from __future__ import annotations
 
@@ -31,6 +31,43 @@ def best_label(labels: Sequence[str], scores: Any) -> str:
     """The label with the highest score; ties go to the earlier label."""
     values = [float(score) for score in scores]
     return labels[max(range(len(values)), key=lambda index: (values[index], -index))]
+
+
+def confident(scores: Any, threshold: float) -> bool:
+    """Whether the softmax of the option scores gives the best option at least ``threshold``.
+
+    Below it AeroVera keeps the Probing answer (A21). With two options the best
+    one always has at least 0.5, so a threshold up to 0.5 never applies to them.
+    """
+    values = [float(score) for score in scores]
+    top = max(values)
+    return 1 / sum(math.exp(value - top) for value in values) >= threshold
+
+
+# Not "yes": YAML reads an unquoted yes as true.
+OPTION_RULES = ("largest_gap", "sign")
+
+
+def chosen_options(margins: dict[str, float], rule: str) -> list[str]:
+    """Options of a multiple-choice question chosen from their yes-minus-no margins, in option order.
+
+    ``sign``: every option whose verification is answered A (是), ties included.
+    ``largest_gap``: sorted from high to low (ties keep the earlier option),
+    the options above the largest drop between neighbouring margins; at least
+    one, never all of them. A shift of every margin, such as a branch leaning
+    towards 是, does not move the cut.
+    """
+    if rule not in OPTION_RULES:
+        raise ValueError(f"option rule must be one of {OPTION_RULES}, got {rule!r}")
+    labels = list(margins)
+    if rule == "sign":
+        return [label for label in labels if margins[label] >= 0]
+    if len(labels) <= 1:
+        return labels
+    ranked = sorted(labels, key=lambda label: (-margins[label], labels.index(label)))
+    drops = [margins[high] - margins[low] for high, low in zip(ranked, ranked[1:])]
+    kept = set(ranked[:drops.index(max(drops)) + 1])  # the first largest drop: the smaller set
+    return [label for label in labels if label in kept]
 
 
 def top_candidates(

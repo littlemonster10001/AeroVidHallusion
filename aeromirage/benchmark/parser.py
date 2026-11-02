@@ -132,6 +132,15 @@ def normalize_fill(value: Any, clue: str = "") -> str:
     return result
 
 
+def verified_options(responses: dict[str, str]) -> list[str]:
+    """Options of a per-option multiple-choice answer whose yes/no question was answered Yes, in option order.
+
+    ``responses`` maps each ordinary option's letter to the raw answer of its
+    verification prompt; an undecidable answer does not choose the option.
+    """
+    return [label for label, raw in responses.items() if parse_binary(_json_answer(final_answer(raw))) == "Yes"]
+
+
 def parse_response(raw: str, sample: BenchmarkSample) -> tuple[str, str]:
     """(model_answer, prediction): the final answer text and its normalized form."""
     answer = _json_answer(final_answer(raw))

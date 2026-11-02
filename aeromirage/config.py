@@ -19,6 +19,8 @@ from omegaconf import MISSING, OmegaConf
 
 from aeromirage.types import TASK_TYPES
 
+MULTIPLE_CHOICE_PROTOCOLS = ("per_option", "whole")
+
 
 @dataclass
 class ModelConfig:
@@ -40,6 +42,10 @@ class DatasetConfig:
 @dataclass
 class GenerationConfig:
     limits: Dict[str, int] = MISSING  # max_new_tokens per question type
+    # per_option: each ordinary option of a multiple-choice question asked as a
+    # yes/no question, the options answered 是 form the answer; whole: one
+    # answer listing the options (meta options shown).
+    multiple_choice: str = "per_option"
 
     def limit_for(self, question_type: str) -> int:
         return self.limits[question_type]
@@ -81,6 +87,9 @@ class BenchmarkConfig:
             raise ValueError(f"generation.limits must set exactly {TASK_TYPES}, got {sorted(limits)}")
         if any(value <= 0 for value in limits.values()):
             raise ValueError("generation.limits must be positive")
+        if self.generation.multiple_choice not in MULTIPLE_CHOICE_PROTOCOLS:
+            raise ValueError(f"generation.multiple_choice must be one of {MULTIPLE_CHOICE_PROTOCOLS}, "
+                             f"got {self.generation.multiple_choice!r}")
         if self.runtime.limit < 0 or self.runtime.limit_per_task < 0:
             raise ValueError("runtime.limit and runtime.limit_per_task cannot be negative")
         if self.runtime.limit and self.runtime.limit_per_task:

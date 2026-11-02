@@ -23,6 +23,8 @@ video:
   image_max_side: 448         # max side of each frame, in pixels
 
 generation:
+  multiple_choice: per_option # per_option: each ordinary option asked as a yes/no question, the options answered
+                              # yes form the answer (meta options not asked); whole: one answer listing the options
   limits:
     binary_verification: 32   # max new tokens per answer
     single_choice: 32         # max new tokens per answer

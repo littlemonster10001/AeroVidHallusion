@@ -8,7 +8,14 @@ import sys
 import time
 from collections import Counter
 from aeromirage.benchmark.loader import load_samples, qa_sha256
-from aeromirage.benchmark.prompts import SYSTEM_PROMPT, build_task_prompt
+from aeromirage.benchmark.parser import verified_options
+from aeromirage.benchmark.prompts import (
+    SYSTEM_PROMPT,
+    VERIFICATION_STATEMENT,
+    build_task_prompt,
+    ordinary_options,
+    verification_prompt,
+)
 from aeromirage.config import BenchmarkConfig, DatasetConfig
 from aeromirage.inference.predictions import PredictionStore
 from aeromirage.models import create_model_adapter
@@ -27,7 +34,7 @@ def prompt_sha256(dataset: DatasetConfig) -> str:
 
 def fingerprint(config: BenchmarkConfig, adapter: BaseModelAdapter) -> dict[str, str]:
     """Everything that changes a model's answers; resuming requires an exact match."""
-    return {
+    result = {
         "model_family": config.model.family,
         "model_path": config.model.path,
         "model_options": json.dumps(config.model.options, sort_keys=True),
@@ -37,6 +44,11 @@ def fingerprint(config: BenchmarkConfig, adapter: BaseModelAdapter) -> dict[str,
         "qa_sha256": qa_sha256(config.dataset.root),
         "prompt_sha256": prompt_sha256(config.dataset),
     }
+    # Absent for the whole-question protocol, so files written before the switch still resume.
+    if config.generation.multiple_choice == "per_option":
+        statement = hashlib.sha256(VERIFICATION_STATEMENT.encode("utf-8")).hexdigest()
+        result["multiple_choice"] = f"per_option {statement}"
+    return result
 
 
 def validate(config: BenchmarkConfig) -> int:
@@ -51,7 +63,12 @@ def validate(config: BenchmarkConfig) -> int:
     for sample in samples:
         if sample.question_type not in shown:
             shown.add(sample.question_type)
-            print(f"\n----- {sample.question_type} {sample.question_id} -----\n{build_task_prompt(sample)}")
+            if sample.question_type == "multiple_choice" and config.generation.multiple_choice == "per_option":
+                label, text = ordinary_options(sample)[0]
+                prompt = f"(one per ordinary option; option {label})\n{verification_prompt(sample, text)}"
+            else:
+                prompt = build_task_prompt(sample)
+            print(f"\n----- {sample.question_type} {sample.question_id} -----\n{prompt}")
     return 0
 
 
@@ -103,13 +120,28 @@ class BenchmarkRunner:
     def _answer(self, adapter: BaseModelAdapter, store: PredictionStore, sample: BenchmarkSample, tag: str) -> bool:
         """Answer one question; False means the run must stop."""
         started = time.perf_counter()
+        extra, prompt = None, None
         try:
-            raw = adapter.generate(
-                sample.video_path,
-                SYSTEM_PROMPT,
-                build_task_prompt(sample),
-                self.config.generation.limit_for(sample.question_type),
-            )
+            if sample.question_type == "multiple_choice" and self.config.generation.multiple_choice == "per_option":
+                # Each ordinary option as a yes/no question; the video is decoded once.
+                responses, prompts = {}, []
+                for label, text in ordinary_options(sample):
+                    responses[label] = adapter.generate(
+                        sample.video_path,
+                        SYSTEM_PROMPT,
+                        verification_prompt(sample, text),
+                        self.config.generation.limit_for("binary_verification"),
+                    )
+                    prompts.append(adapter.last_prompt)
+                raw = ",".join(verified_options(responses))
+                extra, prompt = {"option_responses": responses}, "\n\n".join(prompts)
+            else:
+                raw = adapter.generate(
+                    sample.video_path,
+                    SYSTEM_PROMPT,
+                    build_task_prompt(sample),
+                    self.config.generation.limit_for(sample.question_type),
+                )
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             store.append(sample, error=error, prompt=adapter.last_prompt, elapsed=time.perf_counter() - started)
@@ -121,7 +153,7 @@ class BenchmarkRunner:
             adapter.clear_cache()
             return not self.config.runtime.fail_fast
         elapsed = time.perf_counter() - started
-        store.append(sample, raw_response=raw, prompt=adapter.last_prompt, elapsed=elapsed)
+        store.append(sample, raw_response=raw, prompt=prompt or adapter.last_prompt, elapsed=elapsed, extra=extra)
         preview = raw.rsplit("</think>", 1)[-1].strip().replace("\n", " ")[:60]
         print(f"{tag} {sample.question_type}/{sample.question_id} {elapsed:.1f}s -> {preview}")
         return True

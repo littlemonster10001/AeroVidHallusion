@@ -1,4 +1,4 @@
-"""AeroVera's own prompts: meta-option removal, per-option verification, target extraction."""
+"""AeroVera's own prompts: meta-option removal and target extraction (per-option verification is the benchmark's)."""
 
 from __future__ import annotations
 
@@ -8,20 +8,15 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from aeromirage.benchmark import build_task_prompt, option_letters
+from aeromirage.benchmark import (  # noqa: F401  (re-exported: the per-option protocol is the benchmark's)
+    META_OPTIONS,
+    VERIFICATION_STATEMENT,
+    option_letters,
+    option_text,
+    ordinary_options,
+    verification_prompt,
+)
 from aeromirage.types import BenchmarkSample
-
-
-# Multiple-choice options that are implied by the others rather than seen in
-# the video. AeroVera does not show them to the model (P2). The data has
-# exactly these two texts, always last; ordinary options such as
-# "全部三个汽车停止在交叉处。" must stay, so the whole text is compared.
-META_OPTIONS = ("以上都不是", "以上全部")
-
-
-def option_text(label: str, option: str) -> str:
-    """Text of an option without its ``A.`` prefix."""
-    return re.sub(rf"^\s*{re.escape(label)}\s*[.):：、]\s*", "", option, flags=re.IGNORECASE).strip()
 
 
 def without_meta_options(sample: BenchmarkSample) -> BenchmarkSample:
@@ -40,27 +35,10 @@ def without_meta_options(sample: BenchmarkSample) -> BenchmarkSample:
     return dataclasses.replace(sample, options=kept)
 
 
-# --- Per-option verification (P5) ------------------------------------------
-# A multiple-choice question is answered one ordinary option at a time, as a
-# benchmark-style yes/no question (A = 是, B = 否) about this statement.
-
-VERIFICATION_STATEMENT = "针对问题“{question}”，“{option}”是正确答案之一。"
-
-
-def ordinary_options(sample: BenchmarkSample) -> list[tuple[str, str]]:
-    """(letter, text) of the options of a multiple-choice question other than the meta options."""
-    return [
-        (label, option_text(label, option))
-        for label, option in zip(option_letters(sample.options), sample.options)
-        if option_text(label, option) not in META_OPTIONS
-    ]
-
-
-def verification_prompt(sample: BenchmarkSample, option: str) -> str:
-    """Task prompt asking whether ``option`` (text without its letter) is one of the answers."""
-    statement = VERIFICATION_STATEMENT.format(question=sample.question.strip(), option=option)
-    return build_task_prompt(dataclasses.replace(
-        sample, question_type="binary_verification", question=statement, options=[]))
+# Per-option verification (P5): META_OPTIONS, ordinary_options,
+# VERIFICATION_STATEMENT and verification_prompt are the benchmark's own
+# (aeromirage.benchmark.prompts), so the refine pass and the per-option
+# Probing / baseline ask exactly the same question.
 
 
 # --- Target extraction (P4) -------------------------------------------------

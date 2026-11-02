@@ -108,6 +108,8 @@ class ContrastiveConfig:
     """Contrastive decision of the two branches (Eq. 2)."""
 
     alpha: float = 0.5  # q = q+ + alpha (q+ - q-)
+    option_rule: str = "largest_gap"  # multiple choice from the options' yes-minus-no margins: largest_gap | sign
+    min_confidence: float = 0.0  # single choice / yes-no: keep the Probing answer when softmax(q) of the best option is lower (0: off)
 
 
 @dataclass
@@ -145,4 +147,11 @@ def load_config(path: "str | Path", overrides: Sequence[str] = ()) -> AeroVeraCo
         OmegaConf.load(path),
         OmegaConf.from_dotlist(list(overrides)),
     )
-    return OmegaConf.to_object(merged)
+    config = OmegaConf.to_object(merged)
+    from aerovera.contrastive import OPTION_RULES
+
+    if config.contrastive.option_rule not in OPTION_RULES:  # fail at start, not at the first multiple-choice question
+        raise ValueError(f"contrastive.option_rule must be one of {OPTION_RULES}, got {config.contrastive.option_rule!r}")
+    if not 0 <= config.contrastive.min_confidence <= 1:
+        raise ValueError(f"contrastive.min_confidence must be in [0, 1], got {config.contrastive.min_confidence}")
+    return config

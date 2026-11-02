@@ -198,7 +198,11 @@ class TargetRelevance:
                     patch_sum[t, y:y + rows, x:x + cols] += patch[offset]
                     coverage[t, y:y + rows, x:x + cols] += 1
                     scene_sum[t] += cls[offset]
-        return FrameFeatures(F.normalize(patch_sum / coverage, dim=-1), F.normalize(scene_sum, dim=-1))
+        # In place, the same values as F.normalize(patch_sum / coverage): 64 frames
+        # at 1088p are about 2 GB, and the two temporaries tripled the peak.
+        patch_sum /= coverage
+        patch_sum /= patch_sum.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+        return FrameFeatures(patch_sum, F.normalize(scene_sum, dim=-1))
 
     def score(self, features: FrameFeatures, targets: dict[str, list[str]] | list[str]) -> TargetScores:
         """Eq. 8-9 for the extracted targets of one question; results on the CPU."""
