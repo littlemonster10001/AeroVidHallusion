@@ -45,7 +45,7 @@ def confident(scores: Any, threshold: float) -> bool:
 
 
 # Not "yes": YAML reads an unquoted yes as true.
-OPTION_RULES = ("largest_gap", "sign")
+OPTION_RULES = ("above_mean", "largest_gap", "sign")
 
 
 def chosen_options(margins: dict[str, float], rule: str) -> list[str]:
@@ -54,8 +54,12 @@ def chosen_options(margins: dict[str, float], rule: str) -> list[str]:
     ``sign``: every option whose verification is answered A (是), ties included.
     ``largest_gap``: sorted from high to low (ties keep the earlier option),
     the options above the largest drop between neighbouring margins; at least
-    one, never all of them. A shift of every margin, such as a branch leaning
-    towards 是, does not move the cut.
+    one, never all of them.
+    ``above_mean``: the options whose margin is above the mean margin of the
+    question's options; if none is (all equal), the first option. At least
+    one, never all of them.
+    A shift of every margin, such as a branch leaning towards 是, moves the
+    sign cut only.
     """
     if rule not in OPTION_RULES:
         raise ValueError(f"option rule must be one of {OPTION_RULES}, got {rule!r}")
@@ -64,6 +68,9 @@ def chosen_options(margins: dict[str, float], rule: str) -> list[str]:
         return [label for label in labels if margins[label] >= 0]
     if len(labels) <= 1:
         return labels
+    if rule == "above_mean":
+        mean = sum(margins.values()) / len(labels)
+        return [label for label in labels if margins[label] > mean] or [max(labels, key=margins.get)]
     ranked = sorted(labels, key=lambda label: (-margins[label], labels.index(label)))
     drops = [margins[high] - margins[low] for high, low in zip(ranked, ranked[1:])]
     kept = set(ranked[:drops.index(max(drops)) + 1])  # the first largest drop: the smaller set

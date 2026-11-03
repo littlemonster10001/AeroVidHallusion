@@ -73,11 +73,13 @@ negative:
 
 contrastive:
   # 对比决策（式 2）：q = q+ + alpha (q+ - q-)，在原始 logits 上；选择题只比较选项字母，开放题只对比第一个 token
-  alpha: 0.5
-  option_rule: largest_gap    # 多选：按各选项“是 − 否”的分数选（A20）。largest_gap：从高到低排序，在相邻分数落差最大处切开，
-                              # 上面的全选（至少 1 个、不会全选）；sign：答“是”的全选（旧做法）
+  alpha: 0.5                  # 判断题、单选、开放题共用（开放题按 0.5 跑出，换值需重跑开放题）
+  multiple_choice_alpha: 0.0  # 多选的 alpha（不写则同 alpha；0 = 只用正分支）。离线全量：0 → 57.98，0.5 → 53.25（above_mean）
+  option_rule: above_mean     # 多选：按各选项“是 − 否”的分数选（A20）。largest_gap：从高到低排序，在相邻分数落差最大处切开，
+                              # 上面的全选（至少 1 个、不会全选）；above_mean：高于本题各选项平均分的全选（至少 1 个、不会全选）；
+                              # sign：答“是”的全选（旧做法）
   min_confidence: 0.5         # τ（A21）：单选 / 判断题对比后最优选项的 softmax 概率低于 τ 时保留 Probing 的答案；0 = 关闭。
-                              # 离线结果 τ = 0.5 时单选 +0.9；判断题只有两个选项，τ ≤ 0.5 不起作用
+                              # 离线全量（8303 题）：τ = 0.5 时单选 61.24 → 62.28；判断题只有两个选项，τ ≤ 0.5 不起作用
 
 dataset:
   root: /data01/yeziheng/Dataset/DroneVidHalluBench

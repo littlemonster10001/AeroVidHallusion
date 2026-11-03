@@ -345,9 +345,11 @@ def _multiple_choice(
     """Each ordinary option as a yes/no question (P5). The positive branch
     judges every option on the shared images; the judgment is attributed on
     the Probing video with that option's question, and the top tokens masked
-    give the option's own negative branch. The options are chosen from their
-    yes-minus-no margins by ``contrastive.option_rule`` (A20), each branch's
-    answer by the same rule; the meta options are never answered."""
+    give the option's own negative branch, contrasted with
+    ``contrastive.multiple_choice_alpha`` (``alpha`` when unset). The options
+    are chosen from their yes-minus-no margins by ``contrastive.option_rule``
+    (A20), each branch's answer by the same rule; the meta options are never
+    answered."""
     options = ordinary_options(sample)
     prompts = [verification_prompt(sample, text) for _, text in options]
     yes_no = backbone.label_ids(["A", "B"])
@@ -355,13 +357,15 @@ def _multiple_choice(
     clock.lap("positive")
     margins: dict[str, dict[str, float]] = {"raw_response": {}, "positive_response": {}, "negative_response": {}}
     scores = {}
+    alpha = config.contrastive.multiple_choice_alpha
+    alpha = config.contrastive.alpha if alpha is None else alpha
     for (label, _), prompt, judged in zip(options, prompts, positive):
         inputs = backbone.video_inputs(context.video, SYSTEM_PROMPT, prompt)
         answer_id = yes_no[0] if best_label(["A", "B"], judged) == "A" else yes_no[1]
         _, attribution = backbone.attribute(inputs, answer_ids=[answer_id])
         mask = top_percent(attribution.scores.tolist(), config.negative.mask_percent)
         negative_logits = backbone.first_logits(inputs, mask=mask)[yes_no].cpu()
-        combined = contrast(judged, negative_logits, config.contrastive.alpha)
+        combined = contrast(judged, negative_logits, alpha)
         for field, values in (("raw_response", combined), ("positive_response", judged),
                               ("negative_response", negative_logits)):
             margins[field][label] = float(values[0]) - float(values[1])

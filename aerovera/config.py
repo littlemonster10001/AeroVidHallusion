@@ -10,7 +10,7 @@ annotations at runtime.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from omegaconf import MISSING, OmegaConf
 
@@ -108,7 +108,8 @@ class ContrastiveConfig:
     """Contrastive decision of the two branches (Eq. 2)."""
 
     alpha: float = 0.5  # q = q+ + alpha (q+ - q-)
-    option_rule: str = "largest_gap"  # multiple choice from the options' yes-minus-no margins: largest_gap | sign
+    multiple_choice_alpha: Optional[float] = None  # alpha of the multiple-choice options (None: alpha; 0: positive branch only)
+    option_rule: str = "largest_gap"  # multiple choice from the options' yes-minus-no margins: above_mean | largest_gap | sign
     min_confidence: float = 0.0  # single choice / yes-no: keep the Probing answer when softmax(q) of the best option is lower (0: off)
 
 

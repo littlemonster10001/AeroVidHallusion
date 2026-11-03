@@ -25,7 +25,7 @@ ANSWER_SECTIONS = ("model", "probing", "targets", "dino", "motion", "selection",
 # Fields added after the first result files. At these values (the behaviour
 # before them) they are left out, so that those files still resume.
 NEUTRAL = {"model": {"family": "qwen25_vl"}, "resolution": {"hr_scale": 0.0},
-           "contrastive": {"option_rule": "sign", "min_confidence": 0.0}, "generation": {"multiple_choice": "whole"}}
+           "contrastive": {"option_rule": "sign", "min_confidence": 0.0, "multiple_choice_alpha": None}, "generation": {"multiple_choice": "whole"}}
 
 
 def fingerprint(config: AeroVeraConfig) -> dict[str, str]:
